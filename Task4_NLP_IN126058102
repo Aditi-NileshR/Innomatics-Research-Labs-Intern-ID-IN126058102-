@@ -1,0 +1,113 @@
+%pip install transformers datasets torch scikit-learn pandas matplotlib seaborn
+
+
+import pandas as pd
+import torch
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
+from transformers import BertTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments, AdamW
+from datasets import Dataset
+
+# ==========================================
+# 1. DATA PREPROCESSING [cite: 52]
+# ==========================================
+# Loading a sample of IMDB for demonstration; replace with your Kaggle csv path
+from datasets import load_dataset
+raw_datasets = load_dataset("imdb")
+
+def preprocess_function(examples):
+    # Standardizing text: lowercasing and removing extra whitespace
+    examples["text"] = [text.lower().strip() for text in examples["text"]]
+    return examples
+
+# Clean and handle missing values [cite: 53]
+cleaned_dataset = raw_datasets.map(preprocess_function, batched=True)
+
+# ==========================================
+# 2. DATA SPLITTING [cite: 54, 55]
+# ==========================================
+# Splitting into Train, Validation, and Test
+train_testvalid = cleaned_dataset['train'].train_test_split(test_size=0.2, seed=42)
+test_valid = train_testvalid['test'].train_test_split(test_size=0.5, seed=42)
+
+train_set = train_testvalid['train'].shuffle(seed=42).select(range(2000)) # Small sample for speed
+val_set = test_valid['train'].select(range(500))
+test_set = test_valid['test'].select(range(500))
+
+# ==========================================
+# 3. TOKENIZATION [cite: 56, 57, 58]
+# ==========================================
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+
+def tokenize_function(examples):
+    return tokenizer(examples["text"], padding="max_length", truncation=True, max_length=128)
+
+tokenized_train = train_set.map(tokenize_function, batched=True)
+tokenized_val = val_set.map(tokenize_function, batched=True)
+tokenized_test = test_set.map(tokenize_function, batched=True)
+
+# ==========================================
+# 4. MODEL BUILDING & FINE-TUNING [cite: 59, 60, 62]
+# ==========================================
+def model_init():
+    # Load pre-trained BERT [cite: 61]
+    return AutoModelForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=2)
+
+# Metrics calculation [cite: 69]
+def compute_metrics(eval_pred):
+    logits, labels = eval_pred
+    predictions = torch.argmax(torch.tensor(logits), dim=-1)
+    acc = accuracy_score(labels, predictions)
+    precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='binary')
+    return {"accuracy": acc, "f1": f1, "precision": precision, "recall": recall}
+
+# Training Arguments as per instructions [cite: 63, 64]
+training_args = TrainingArguments(
+    output_dir="./results",
+    evaluation_strategy="epoch",
+    learning_rate=2e-5, # [cite: 64]
+    per_device_train_batch_size=16,
+    num_train_epochs=3,
+    weight_decay=0.01,
+)
+
+# Initialize Trainer [cite: 67]
+trainer = Trainer(
+    model_init=model_init,
+    args=training_args,
+    train_dataset=tokenized_train,
+    eval_dataset=tokenized_val,
+    compute_metrics=compute_metrics,
+)
+
+# Train the model
+trainer.train()
+model_frozen = model_init()
+# Freeze all BERT parameters
+for param in model_frozen.bert.parameters():
+    param.requires_grad = False
+
+# Re-train only the classifier head...
+model_partial = model_init()
+for name, param in model_partial.bert.named_parameters():
+    # Freeze all except last two layers
+    if not any(nd in name for nd in ["layer.11", "layer.10", "pooler"]):
+        param.requires_grad = False
+# Get predictions
+preds_output = trainer.predict(tokenized_test)
+y_preds = torch.argmax(torch.tensor(preds_output.predictions), dim=-1)
+y_true = tokenized_test["label"]
+
+# Confusion Matrix [cite: 76]
+cm = confusion_matrix(y_true, y_preds)
+plt.figure(figsize=(8,6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix - BERT Fine-Tuning')
+plt.show()
+
+# Final Metrics Printout [cite: 70, 72, 73, 74]
+print(f"Test Accuracy: {accuracy_score(y_true, y_preds):.4f}")
