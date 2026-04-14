@@ -4,7 +4,7 @@ from typing import Optional, List
 app = FastAPI()
 
 
-#Q1. FFILTER PRODUCTS BY MINIMUM PRICE
+#Q1. FILTER PRODUCTS BY MINIMUM PRICE
 products = [
     {"name": "Wireless Mouse", "price": 499, "category": "Electronics"},
     {"name": "USB Hub", "price": 799, "category": "Electronics"},
@@ -19,7 +19,6 @@ def filter_products(
     max_price: Optional[int] = Query(None),
     category: Optional[str] = Query(None)
 ) -> List[dict]:
-
     result = products
 
     if min_price is not None:
@@ -30,7 +29,6 @@ def filter_products(
 
     if category is not None:
         result = [p for p in result if p["category"].lower() == category.lower()]
-
     return result
 
 
